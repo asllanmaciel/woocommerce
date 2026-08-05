@@ -1169,10 +1169,10 @@ class WC_Product_Data_Store_CPT extends WC_Data_Store_WP implements WC_Object_Da
 	 */
 	protected function update_version_and_type( &$product ) {
 		$product_id        = $product->get_id();
+		$old_type          = \WC_Product_Factory::get_product_type( $product_id );
+		$new_type          = $product->get_type();
 		$stored_type_terms = get_the_terms( $product_id, 'product_type' );
 		$has_type_terms    = ! empty( $stored_type_terms ) && is_array( $stored_type_terms );
-		$old_type          = $has_type_terms ? sanitize_title( current( $stored_type_terms )->name ) : ProductType::SIMPLE;
-		$new_type          = $product->get_type();
 
 		// Skip wp_set_object_terms() when the type is unchanged — it always clears the term cache even on no-op writes.
 		if ( ! $has_type_terms || $old_type !== $new_type ) {

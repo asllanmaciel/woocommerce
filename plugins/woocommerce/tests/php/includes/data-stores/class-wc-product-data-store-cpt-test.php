@@ -393,6 +393,44 @@ class WC_Product_Data_Store_CPT_Test extends WC_Unit_Test_Case {
 	}
 
 	/**
+	 * @testdox update_version_and_type uses the filtered product type as $old_type, not the stored term.
+	 */
+	public function test_update_version_and_type_respects_product_type_query_filter(): void {
+		$store = new class() extends WC_Product_Data_Store_CPT {
+			public function update_version_and_type( &$product ): void { // phpcs:ignore Generic.CodeAnalysis.UselessOverridingMethod.Found, Squiz.Commenting.FunctionComment.Missing
+				parent::update_version_and_type( $product );
+			}
+		};
+
+		// Mimics WC_Product_Booking: stored as 'variable' term, but filter overrides type to 'booking' at runtime.
+		$product = new WC_Product_Variable();
+		$product->save();
+		$product_id = $product->get_id();
+
+		$external = new WC_Product_External( $product_id );
+		$filter   = static fn ( $override, $id ) => $id === $product_id ? 'external' : false;
+		add_filter( 'woocommerce_product_type_query', $filter, 10, 2 );
+
+		$fired_args = null;
+		$tracker    = function ( $p, $from, $to ) use ( &$fired_args ) {
+			$fired_args = array( $from, $to );
+		};
+		add_action( 'woocommerce_product_type_changed', $tracker, 10, 3 );
+
+		try {
+			$store->update_version_and_type( $external );
+		} finally {
+			remove_filter( 'woocommerce_product_type_query', $filter, 10 );
+			remove_action( 'woocommerce_product_type_changed', $tracker, 10 );
+		}
+
+		// Filter overrides old type to 'external', matching new type — no transition expected.
+		$this->assertNull( $fired_args );
+
+		$product->delete( true );
+	}
+
+	/**
 	 * Test update_product_sales updates on the meta-entry.
 	 */
 	public function test_update_product_sales_meta_update(): void {
