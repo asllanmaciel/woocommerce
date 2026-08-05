@@ -33,7 +33,7 @@ import { error, warn } from './diagnostics';
 import { sanitizeSettingsHtml } from './html';
 import { NativeSettingsField } from './native-fields';
 import {
-	resolveFieldComponent,
+	resolveFieldComponentForRendering,
 	resolveFieldVisibilityPredicate,
 	resolveGroupVisibilityPredicate,
 	resolveRegionComponent,
@@ -963,7 +963,7 @@ export const SettingsUIPage = ( {
 							>
 								{ group.fields.map( ( field ) => {
 									const FieldComponent =
-										resolveFieldComponent(
+										resolveFieldComponentForRendering(
 											field,
 											context
 										) || NativeSettingsField;
