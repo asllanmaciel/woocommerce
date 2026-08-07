@@ -56,12 +56,15 @@ class SiteLocale {
 	 * is unavailable, the callback runs under en_US so untranslated source strings are used
 	 * deterministically. The previous locale is restored afterwards, even when the callback throws.
 	 *
-	 * No textdomain reload is needed. WP_Locale_Switcher unloads every loaded textdomain as
-	 * reloadable and lets it JIT-reload under the new locale, and it filters both `locale` and
-	 * `determine_locale`, so the `plugin_locale` value WC()->load_plugin_textdomain() reads already
-	 * resolves to the switched locale. A site layering a custom WP_LANG_DIR/woocommerce/*.mo gets
-	 * the canonical translation inside the window rather than its override, since core's JIT reload
-	 * does not know about that file.
+	 * The callback must resolve WooCommerce translations identically on requests that switch and
+	 * requests that do not. WP_Locale_Switcher handles the switch itself — it unloads every loaded
+	 * textdomain as reloadable and lets it JIT-reload under the new locale — but the JIT reload
+	 * only knows standard language-pack paths, while WC()->load_plugin_textdomain() layers a
+	 * custom WP_LANG_DIR/woocommerce/woocommerce-{locale}.mo file over the pack. So the same
+	 * layering is applied before the callback in both branches, and again after restoring so the
+	 * request's own layering survives the switch. Without it, a site with such a custom file
+	 * stores the override slug on site-locale requests but compares against the pack slug on
+	 * switched requests, and the stored value never matches the screen.
 	 *
 	 * @param callable $callback The code to run under the site locale.
 	 * @return mixed The callback's return value.
@@ -81,11 +84,39 @@ class SiteLocale {
 				}
 			}
 
+			self::layer_custom_translations( determine_locale() );
+
 			return $callback();
 		} finally {
 			if ( $locale_was_switched ) {
 				restore_previous_locale();
+				self::layer_custom_translations( determine_locale() );
 			}
 		}
+	}
+
+	/**
+	 * Re-apply WooCommerce's custom translation layering for a locale.
+	 *
+	 * Mirrors WC()->load_plugin_textdomain() without requiring an initialized WooCommerce
+	 * instance: when a custom WP_LANG_DIR/woocommerce/woocommerce-{locale}.mo exists, the domain
+	 * is rebuilt as that file layered over the standard language pack. A no-op without the custom
+	 * file — the standard pack alone is exactly what core's JIT reload produces on its own.
+	 *
+	 * The unload is reloadable, unlike WC's loader, so translations for domains this method does
+	 * not rebuild keep JIT-reloading for the rest of the request.
+	 *
+	 * @param string $locale Locale to layer translations for.
+	 */
+	private static function layer_custom_translations( string $locale ): void {
+		$custom_translation_path = WP_LANG_DIR . '/woocommerce/woocommerce-' . $locale . '.mo';
+
+		if ( ! is_readable( $custom_translation_path ) ) {
+			return;
+		}
+
+		unload_textdomain( 'woocommerce', true );
+		load_textdomain( 'woocommerce', $custom_translation_path, $locale );
+		load_textdomain( 'woocommerce', WP_LANG_DIR . '/plugins/woocommerce-' . $locale . '.mo', $locale );
 	}
 }

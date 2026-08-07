@@ -163,6 +163,66 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	}
 
 	/**
+	 * A custom WP_LANG_DIR/woocommerce/woocommerce-{locale}.mo override is layered over the
+	 * language pack by WC()->load_plugin_textdomain(), but core's JIT reload after a locale
+	 * switch only knows the pack. If run() does not re-apply the layering, a request already in
+	 * the site locale and a request that switches derive different slugs from the same site
+	 * configuration.
+	 *
+	 * @testdox Should resolve custom translation overrides identically with and without a switch.
+	 */
+	public function test_run_layers_custom_translation_overrides_when_switching(): void {
+		global $wp_locale_switcher;
+
+		require_once ABSPATH . WPINC . '/pomo/mo.php';
+
+		$custom_mo = WP_LANG_DIR . '/woocommerce/woocommerce-fr_FR.mo';
+		$pack_mo   = WP_LANG_DIR . '/plugins/woocommerce-fr_FR.mo';
+
+		wp_mkdir_p( dirname( $custom_mo ) );
+		wp_mkdir_p( dirname( $pack_mo ) );
+
+		$write_mo = static function ( string $path, string $translation ): void {
+			$mo = new \MO();
+			$mo->add_entry(
+				new \Translation_Entry(
+					array(
+						'singular'     => 'product',
+						'context'      => 'slug',
+						'translations' => array( $translation ),
+					)
+				)
+			);
+			$mo->export_to_file( $path );
+		};
+		$write_mo( $custom_mo, 'produit-custom' );
+		$write_mo( $pack_mo, 'produit' );
+
+		$filter_site_locale = static fn(): string => 'fr_FR';
+		add_filter( 'pre_option_WPLANG', $filter_site_locale );
+
+		$property = new \ReflectionProperty( \WP_Locale_Switcher::class, 'available_languages' );
+		$property->setAccessible( true );
+		$original_languages = $property->getValue( $wp_locale_switcher );
+		$property->setValue( $wp_locale_switcher, array_merge( $original_languages, array( 'fr_FR' ) ) );
+
+		try {
+			$this->assertSame( 'fr_FR', SiteLocale::get() );
+			$this->assertNotSame( 'fr_FR', determine_locale(), 'The request must run in a different locale so run() has to switch.' );
+
+			$slug_inside = SiteLocale::run( static fn(): string => _x( 'product', 'slug', 'woocommerce' ) );
+
+			$this->assertSame( 'produit-custom', $slug_inside, 'A switched request must resolve the same custom override a site-locale request resolves.' );
+		} finally {
+			$property->setValue( $wp_locale_switcher, $original_languages );
+			remove_filter( 'pre_option_WPLANG', $filter_site_locale );
+			unload_textdomain( 'woocommerce', true );
+			wp_delete_file( $custom_mo );
+			wp_delete_file( $pack_mo );
+		}
+	}
+
+	/**
 	 * @testdox Should restore the request locale when the callback throws.
 	 */
 	public function test_run_restores_the_locale_when_the_callback_throws(): void {
