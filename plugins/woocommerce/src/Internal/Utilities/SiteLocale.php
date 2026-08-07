@@ -6,7 +6,7 @@ namespace Automattic\WooCommerce\Internal\Utilities;
 /**
  * Utility for resolving the site's configured locale deterministically and running code under it.
  *
- * get_locale() reflects per-request state: temporary WP_Locale_Switcher switches, per-visitor
+ * The get_locale() value reflects per-request state: temporary WP_Locale_Switcher switches, per-visitor
  * `locale` filters from multilingual plugins, and a `$GLOBALS['locale']` cache that can go stale
  * across switch_to_blog(). Values persisted site-wide, or compared against persisted values, must
  * not depend on any of that, or whichever request runs first decides what gets stored.
@@ -73,7 +73,7 @@ class SiteLocale {
 
 		try {
 			// determine_locale() may reflect a temporary locale switch, a locale filter, or a different blog's cached locale.
-			if ( $current_locale !== $site_locale && function_exists( 'switch_to_locale' ) ) {
+			if ( $current_locale !== $site_locale ) {
 				$locale_was_switched = switch_to_locale( $site_locale );
 
 				if ( ! $locale_was_switched && self::FALLBACK_LOCALE !== $current_locale ) {
