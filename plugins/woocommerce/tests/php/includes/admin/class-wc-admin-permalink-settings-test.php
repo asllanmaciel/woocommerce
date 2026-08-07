@@ -555,6 +555,24 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	}
 
 	/**
+	 * The `/%product_cat%/` guard prepends the product slug at save time, so it must resolve in
+	 * the deterministic site locale too — not the request language of whoever happens to save.
+	 *
+	 * @testdox Should prepend the site-locale product slug to a bare %product_cat% custom base.
+	 */
+	public function test_product_cat_custom_base_uses_the_site_locale_product_slug(): void {
+		$this->ensure_shop_page();
+		$this->add_switchable_locale( 'fr_FR' );
+		$this->add_visitor_locale_filter( 'fr_FR' );
+		$this->activate_french_permalink_slug_translations();
+
+		$html = $this->save_and_render( 'custom', '/%product_cat%/' );
+
+		$this->assertSame( '/product/%product_cat%', get_option( 'woocommerce_permalinks' )['product_base'], 'The guard must prepend the site-locale product slug, not the request-language slug.' );
+		$this->assert_only_radio_checked( $html, 'custom' );
+	}
+
+	/**
 	 * @testdox Should not change the stored product_base for any predefined structure.
 	 */
 	public function test_predefined_structures_store_the_same_sanitized_value_as_before(): void {

@@ -187,8 +187,9 @@ class WC_Admin_Permalink_Settings {
 	/**
 	 * Get the product slug translated in the site locale.
 	 *
-	 * Shared by settings() and settings_save() so the rendered checked-state and the stored
-	 * Default base cannot diverge.
+	 * The single resolution point for the product slug in this class: settings() compares the
+	 * checked-state against it, and settings_save() stores it for both the Default base and the
+	 * `%product_cat%` guard. Resolving it anywhere else can diverge under per-request locales.
 	 *
 	 * @return string Unsanitized product slug. Callers sanitize with wc_sanitize_permalink().
 	 */
@@ -237,7 +238,7 @@ class WC_Admin_Permalink_Settings {
 
 				// This is an invalid base structure and breaks pages.
 				if ( '/%product_cat%/' === trailingslashit( $product_base ) ) {
-					$product_base = '/' . _x( 'product', 'slug', 'woocommerce' ) . $product_base;
+					$product_base = '/' . $this->get_site_locale_product_slug() . $product_base;
 				}
 			} elseif ( empty( $product_base ) ) {
 				// Store the site-locale slug that wc_get_permalink_structure() initializes and
