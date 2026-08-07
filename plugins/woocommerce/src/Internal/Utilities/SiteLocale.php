@@ -62,8 +62,9 @@ class SiteLocale {
 	 * requests that do not. WP_Locale_Switcher handles the switch itself — it unloads every loaded
 	 * textdomain as reloadable and lets it JIT-reload under the new locale — but the JIT reload
 	 * only knows standard language-pack paths, while WC()->load_plugin_textdomain() layers a
-	 * custom WP_LANG_DIR/woocommerce/woocommerce-{locale}.mo file over the pack. So the same
-	 * layering is applied before the callback in both branches, and again after restoring so the
+	 * custom WP_LANG_DIR/woocommerce/woocommerce-{locale}.mo file over the pack, honoring the
+	 * public `plugin_locale` filter as it does. So the same construction, filter included, is
+	 * applied before the callback in both branches, and again after restoring so the
 	 * request's own layering survives the switch. Without it, a site with such a custom file
 	 * stores the override slug on site-locale requests but compares against the pack slug on
 	 * switched requests, and the stored value never matches the screen.
@@ -74,27 +75,43 @@ class SiteLocale {
 	 * @since 11.1.0
 	 */
 	public static function run( callable $callback ) {
-		$site_locale         = self::get();
-		$current_locale      = determine_locale();
-		$locale_was_switched = false;
+		$site_locale = self::get();
+
+		/*
+		 * A stale WPLANG can keep naming a language whose files were removed. get_locale() does
+		 * not validate availability, so ordinary requests still report that locale and would take
+		 * the no-switch path while other requests fail the switch and fall back — two results
+		 * from one configuration. Resolve an unavailable site locale to the fallback up front.
+		 */
+		if ( self::FALLBACK_LOCALE !== $site_locale && ! in_array( $site_locale, get_available_languages(), true ) ) {
+			$site_locale = self::FALLBACK_LOCALE;
+		}
+
+		$current_locale = determine_locale();
+		$switched_to    = null;
 
 		try {
 			// determine_locale() may reflect a temporary locale switch, a locale filter, or a different blog's cached locale.
 			if ( $current_locale !== $site_locale ) {
-				$locale_was_switched = switch_to_locale( $site_locale );
-
-				if ( ! $locale_was_switched && self::FALLBACK_LOCALE !== $current_locale ) {
-					$locale_was_switched = switch_to_locale( self::FALLBACK_LOCALE );
+				if ( switch_to_locale( $site_locale ) ) {
+					$switched_to = $site_locale;
+				} elseif ( self::FALLBACK_LOCALE !== $current_locale && switch_to_locale( self::FALLBACK_LOCALE ) ) {
+					$switched_to = self::FALLBACK_LOCALE;
 				}
 			}
 
-			self::layer_custom_translations( determine_locale() );
+			/*
+			 * The target is passed explicitly rather than re-reading determine_locale(): an
+			 * extension filtering it after WP_Locale_Switcher still reports the visitor language
+			 * inside the window, and layering that MO would defeat the switch.
+			 */
+			self::layer_custom_translations( $switched_to ?? $current_locale );
 
 			return $callback();
 		} finally {
-			if ( $locale_was_switched ) {
+			if ( null !== $switched_to ) {
 				restore_previous_locale();
-				self::layer_custom_translations( determine_locale() );
+				self::layer_custom_translations( $current_locale );
 			}
 		}
 	}
@@ -110,9 +127,18 @@ class SiteLocale {
 	 * The unload is reloadable, unlike WC's loader, so translations for domains this method does
 	 * not rebuild keep JIT-reloading for the rest of the request.
 	 *
-	 * @param string $locale Locale to layer translations for.
+	 * @param string $locale Locale to layer translations for, before `plugin_locale` filtering.
 	 */
 	private static function layer_custom_translations( string $locale ): void {
+		/** This filter is documented in wp-includes/l10n.php */
+		$filtered_locale = apply_filters( 'plugin_locale', $locale, 'woocommerce' ); // phpcs:ignore WooCommerce.Commenting.CommentHooks.MissingSinceComment -- Core filter, documented in wp-includes/l10n.php.
+
+		// The filter is a public contract WC()->load_plugin_textdomain() honors when building the
+		// ambient domain, so honor it here too — but any callback can return anything.
+		if ( is_string( $filtered_locale ) && '' !== $filtered_locale ) {
+			$locale = $filtered_locale;
+		}
+
 		$custom_translation_path = WP_LANG_DIR . '/woocommerce/woocommerce-' . $locale . '.mo';
 
 		if ( ! is_readable( $custom_translation_path ) ) {

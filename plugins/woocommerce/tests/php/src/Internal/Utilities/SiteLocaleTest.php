@@ -12,6 +12,29 @@ use WC_Unit_Test_Case;
 class SiteLocaleTest extends WC_Unit_Test_Case {
 
 	/**
+	 * Write a minimal MO file translating the 'product' permalink slug.
+	 *
+	 * @param string $path        Target .mo path; parent directories are created.
+	 * @param string $translation Translation for the 'product' slug.
+	 */
+	private function write_slug_mo( string $path, string $translation ): void {
+		require_once ABSPATH . WPINC . '/pomo/mo.php';
+		wp_mkdir_p( dirname( $path ) );
+
+		$mo = new \MO();
+		$mo->add_entry(
+			new \Translation_Entry(
+				array(
+					'singular'     => 'product',
+					'context'      => 'slug',
+					'translations' => array( $translation ),
+				)
+			)
+		);
+		$mo->export_to_file( $path );
+	}
+
+	/**
 	 * Simulate an admin request whose user locale (fr_FR) diverges from the en_US site locale.
 	 */
 	private function set_up_french_admin_request(): void {
@@ -174,29 +197,15 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	public function test_run_layers_custom_translation_overrides_when_switching(): void {
 		global $wp_locale_switcher;
 
-		require_once ABSPATH . WPINC . '/pomo/mo.php';
-
 		$custom_mo = WP_LANG_DIR . '/woocommerce/woocommerce-fr_FR.mo';
 		$pack_mo   = WP_LANG_DIR . '/plugins/woocommerce-fr_FR.mo';
+		$core_mo   = WP_LANG_DIR . '/fr_FR.mo';
 
-		wp_mkdir_p( dirname( $custom_mo ) );
-		wp_mkdir_p( dirname( $pack_mo ) );
-
-		$write_mo = static function ( string $path, string $translation ): void {
-			$mo = new \MO();
-			$mo->add_entry(
-				new \Translation_Entry(
-					array(
-						'singular'     => 'product',
-						'context'      => 'slug',
-						'translations' => array( $translation ),
-					)
-				)
-			);
-			$mo->export_to_file( $path );
-		};
-		$write_mo( $custom_mo, 'produit-custom' );
-		$write_mo( $pack_mo, 'produit' );
+		$this->write_slug_mo( $custom_mo, 'produit-custom' );
+		$this->write_slug_mo( $pack_mo, 'produit' );
+		// A core language file makes fr_FR genuinely available, so the availability
+		// pre-check in run() keeps the configured site locale.
+		$this->write_slug_mo( $core_mo, 'ignore' );
 
 		$filter_site_locale = static fn(): string => 'fr_FR';
 		add_filter( 'pre_option_WPLANG', $filter_site_locale );
@@ -219,6 +228,101 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 			unload_textdomain( 'woocommerce', true );
 			wp_delete_file( $custom_mo );
 			wp_delete_file( $pack_mo );
+			wp_delete_file( $core_mo );
+		}
+	}
+
+	/**
+	 * An extension filtering `determine_locale` after WP_Locale_Switcher still reports the
+	 * visitor language inside the switched window, so the layering target must be the locale
+	 * run() actually switched to — not a re-read of the filterable request value.
+	 *
+	 * @testdox Should layer translations for the switched locale, not the filtered request locale.
+	 */
+	public function test_run_layers_for_the_switched_locale_not_the_filtered_request_locale(): void {
+		$custom_mo = WP_LANG_DIR . '/woocommerce/woocommerce-fr_FR.mo';
+		$this->write_slug_mo( $custom_mo, 'produit-custom' );
+
+		$filter_request_locale = static fn(): string => 'fr_FR';
+		add_filter( 'determine_locale', $filter_request_locale, 20 );
+
+		try {
+			$slug_inside = SiteLocale::run( static fn(): string => _x( 'product', 'slug', 'woocommerce' ) );
+
+			$this->assertSame( 'product', $slug_inside, 'The en_US window must not resolve the visitor-locale custom translation.' );
+		} finally {
+			remove_filter( 'determine_locale', $filter_request_locale, 20 );
+			unload_textdomain( 'woocommerce', true );
+			wp_delete_file( $custom_mo );
+		}
+	}
+
+	/**
+	 * WC()->load_plugin_textdomain() honors the public `plugin_locale` filter when building the
+	 * ambient domain, so run() must honor it when layering, or requests that switch resolve
+	 * different slugs than requests that do not.
+	 *
+	 * @testdox Should honor the plugin_locale filter identically with and without a switch.
+	 */
+	public function test_run_honors_plugin_locale_identically_with_and_without_a_switch(): void {
+		$custom_mo = WP_LANG_DIR . '/woocommerce/woocommerce-de_DE.mo';
+		$this->write_slug_mo( $custom_mo, 'produkt-custom' );
+
+		$pin_plugin_locale     = static fn(): string => 'de_DE';
+		$filter_visitor_locale = static fn(): string => 'fr_FR';
+		add_filter( 'plugin_locale', $pin_plugin_locale );
+
+		try {
+			WC()->load_plugin_textdomain();
+			$no_switch_slug = SiteLocale::run( static fn(): string => _x( 'product', 'slug', 'woocommerce' ) );
+
+			add_filter( 'locale', $filter_visitor_locale, 5 );
+			$switched_slug = SiteLocale::run( static fn(): string => _x( 'product', 'slug', 'woocommerce' ) );
+
+			$this->assertSame( 'produkt-custom', $no_switch_slug, 'The no-switch request should resolve the plugin_locale translation.' );
+			$this->assertSame( $no_switch_slug, $switched_slug, 'Both request shapes must resolve the same plugin_locale translation.' );
+		} finally {
+			remove_filter( 'locale', $filter_visitor_locale, 5 );
+			remove_filter( 'plugin_locale', $pin_plugin_locale );
+			unload_textdomain( 'woocommerce', true );
+			wp_delete_file( $custom_mo );
+		}
+	}
+
+	/**
+	 * get_locale() does not validate availability, so a stale WPLANG naming a removed language
+	 * still reaches the no-switch equality path on ordinary requests while other requests fall
+	 * back to en_US. An unavailable site locale must resolve under the fallback on every shape.
+	 *
+	 * @testdox Should resolve under the fallback on all request shapes when the site locale is unavailable.
+	 */
+	public function test_run_applies_the_fallback_when_the_unavailable_site_locale_is_current(): void {
+		$custom_mo = WP_LANG_DIR . '/woocommerce/woocommerce-fr_FR.mo';
+		$this->write_slug_mo( $custom_mo, 'produit-custom' );
+
+		$filter_site_locale    = static fn(): string => 'fr_FR';
+		$filter_request_locale = static fn(): string => 'fr_FR';
+
+		add_filter( 'pre_option_WPLANG', $filter_site_locale );
+		add_filter( 'locale', $filter_request_locale, 5 );
+
+		try {
+			$this->assertNotContains( 'fr_FR', get_available_languages(), 'The site locale must be unavailable for this regression test.' );
+
+			$ambient_slug = SiteLocale::run( static fn(): string => _x( 'product', 'slug', 'woocommerce' ) );
+
+			remove_filter( 'locale', $filter_request_locale, 5 );
+			// Fresh request: the first run's restore re-layered the fr request's own ambient state.
+			unload_textdomain( 'woocommerce', true );
+			$divergent_slug = SiteLocale::run( static fn(): string => _x( 'product', 'slug', 'woocommerce' ) );
+
+			$this->assertSame( 'product', $ambient_slug, 'An unavailable site locale must resolve under en_US even when the request already reports it.' );
+			$this->assertSame( $ambient_slug, $divergent_slug, 'Both request shapes must resolve the same fallback value.' );
+		} finally {
+			remove_filter( 'locale', $filter_request_locale, 5 );
+			remove_filter( 'pre_option_WPLANG', $filter_site_locale );
+			unload_textdomain( 'woocommerce', true );
+			wp_delete_file( $custom_mo );
 		}
 	}
 
