@@ -83,11 +83,12 @@ class SiteLocale {
 		 * the no-switch path while other requests fail the switch and fall back — two results
 		 * from one configuration. Resolve an unavailable site locale to the fallback up front.
 		 */
-		if ( self::FALLBACK_LOCALE !== $site_locale && ! in_array( $site_locale, get_available_languages(), true ) ) {
+		// Both core functions return their filter's output uncast; coerce before strictly typed use.
+		if ( self::FALLBACK_LOCALE !== $site_locale && ! in_array( $site_locale, (array) get_available_languages(), true ) ) {
 			$site_locale = self::FALLBACK_LOCALE;
 		}
 
-		$current_locale = determine_locale();
+		$current_locale = (string) determine_locale();
 		$switched_to    = null;
 
 		try {
