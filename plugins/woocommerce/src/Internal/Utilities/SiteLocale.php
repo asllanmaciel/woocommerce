@@ -112,6 +112,9 @@ class SiteLocale {
 			if ( null !== $switched_to ) {
 				restore_previous_locale();
 				self::layer_custom_translations( $current_locale );
+				// restore_previous_locale() leaves the translation controller on the switcher's
+				// bootstrap locale, not the recorded request locale a `locale` filter supplied.
+				\WP_Translation_Controller::get_instance()->set_locale( $current_locale );
 			}
 		}
 	}
@@ -142,10 +145,13 @@ class SiteLocale {
 			return;
 		}
 
-		// Non-reloadable, like WC()->load_plugin_textdomain(): it evicts the domain's already
-		// loaded files — the switch eagerly JIT-loads the target pack — so the custom file loaded
-		// first keeps precedence over the pack.
-		unload_textdomain( 'woocommerce' );
+		// Evict the domain's already loaded files — the switch eagerly JIT-loads the target pack,
+		// which would keep precedence over the custom file. Controller-level eviction, unlike the
+		// non-reloadable unload WC()->load_plugin_textdomain() uses, leaves just-in-time loading
+		// armed: the unload marker is never cleared by regular loads, and would block the request
+		// locale's pack from reloading after the restore.
+		unload_textdomain( 'woocommerce', true );
+		\WP_Translation_Controller::get_instance()->unload_textdomain( 'woocommerce' );
 		load_textdomain( 'woocommerce', $custom_translation_path, $locale );
 		load_textdomain( 'woocommerce', WP_LANG_DIR . '/plugins/woocommerce-' . $file_locale . '.mo', $locale );
 	}

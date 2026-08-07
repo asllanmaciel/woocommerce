@@ -197,18 +197,28 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	public function test_run_layers_custom_translation_overrides_when_switching(): void {
 		global $wp_locale_switcher;
 
-		$custom_mo = WP_LANG_DIR . '/woocommerce/woocommerce-fr_FR.mo';
-		$pack_mo   = WP_LANG_DIR . '/plugins/woocommerce-fr_FR.mo';
-		$core_mo   = WP_LANG_DIR . '/fr_FR.mo';
+		$custom_mo  = WP_LANG_DIR . '/woocommerce/woocommerce-fr_FR.mo';
+		$pack_mo    = WP_LANG_DIR . '/plugins/woocommerce-fr_FR.mo';
+		$core_mo    = WP_LANG_DIR . '/fr_FR.mo';
+		$de_pack_mo = WP_LANG_DIR . '/plugins/woocommerce-de_DE.mo';
 
 		$this->write_slug_mo( $custom_mo, 'produit-custom' );
 		$this->write_slug_mo( $pack_mo, 'produit' );
 		// A core language file makes fr_FR genuinely available, so the availability
 		// pre-check in run() keeps the configured site locale.
 		$this->write_slug_mo( $core_mo, 'ignore' );
+		// The request locale carries only a canonical pack — after run() it must still resolve.
+		$this->write_slug_mo( $de_pack_mo, 'produkt' );
 
-		$filter_site_locale = static fn(): string => 'fr_FR';
+		global $wp_textdomain_registry;
+		// The registry may have cached an earlier, emptier scan of the packs directory.
+		$wp_textdomain_registry->set( 'woocommerce', 'fr_FR', WP_LANG_DIR . '/plugins/' );
+		$wp_textdomain_registry->set( 'woocommerce', 'de_DE', WP_LANG_DIR . '/plugins/' );
+
+		$filter_site_locale    = static fn(): string => 'fr_FR';
+		$filter_request_locale = static fn(): string => 'de_DE';
 		add_filter( 'pre_option_WPLANG', $filter_site_locale );
+		add_filter( 'locale', $filter_request_locale, 5 );
 
 		$property = new \ReflectionProperty( \WP_Locale_Switcher::class, 'available_languages' );
 		$property->setAccessible( true );
@@ -226,13 +236,17 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 			$slug_inside = SiteLocale::run( static fn(): string => _x( 'product', 'slug', 'woocommerce' ) );
 
 			$this->assertSame( 'produit-custom', $slug_inside, 'A switched request must resolve the same custom override a site-locale request resolves.' );
+			$this->assertSame( 'de_DE', \WP_Translation_Controller::get_instance()->get_locale(), 'The controller must be back on the request locale after run().' );
+			$this->assertSame( 'produkt', _x( 'product', 'slug', 'woocommerce' ), 'The request locale pack must still resolve after run().' );
 		} finally {
 			$property->setValue( $wp_locale_switcher, $original_languages );
+			remove_filter( 'locale', $filter_request_locale, 5 );
 			remove_filter( 'pre_option_WPLANG', $filter_site_locale );
 			unload_textdomain( 'woocommerce', true );
 			wp_delete_file( $custom_mo );
 			wp_delete_file( $pack_mo );
 			wp_delete_file( $core_mo );
+			wp_delete_file( $de_pack_mo );
 		}
 	}
 
