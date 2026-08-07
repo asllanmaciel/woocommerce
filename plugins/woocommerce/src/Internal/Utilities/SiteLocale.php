@@ -124,9 +124,6 @@ class SiteLocale {
 	 * is rebuilt as that file layered over the standard language pack. A no-op without the custom
 	 * file — the standard pack alone is exactly what core's JIT reload produces on its own.
 	 *
-	 * The unload is reloadable, unlike WC's loader, so translations for domains this method does
-	 * not rebuild keep JIT-reloading for the rest of the request.
-	 *
 	 * @param string $locale Locale to layer translations for, before `plugin_locale` filtering.
 	 */
 	private static function layer_custom_translations( string $locale ): void {
@@ -134,19 +131,22 @@ class SiteLocale {
 		$filtered_locale = apply_filters( 'plugin_locale', $locale, 'woocommerce' ); // phpcs:ignore WooCommerce.Commenting.CommentHooks.MissingSinceComment -- Core filter, documented in wp-includes/l10n.php.
 
 		// The filter is a public contract WC()->load_plugin_textdomain() honors when building the
-		// ambient domain, so honor it here too — but any callback can return anything.
-		if ( is_string( $filtered_locale ) && '' !== $filtered_locale ) {
-			$locale = $filtered_locale;
-		}
+		// ambient domain, so honor it here too — but any callback can return anything, and it only
+		// picks the files: the loads stay keyed to the actual locale, or the pinned value would
+		// leak into WP_Translation_Controller's current locale for every later translation.
+		$file_locale = is_string( $filtered_locale ) && '' !== $filtered_locale ? $filtered_locale : $locale;
 
-		$custom_translation_path = WP_LANG_DIR . '/woocommerce/woocommerce-' . $locale . '.mo';
+		$custom_translation_path = WP_LANG_DIR . '/woocommerce/woocommerce-' . $file_locale . '.mo';
 
 		if ( ! is_readable( $custom_translation_path ) ) {
 			return;
 		}
 
-		unload_textdomain( 'woocommerce', true );
+		// Non-reloadable, like WC()->load_plugin_textdomain(): it evicts the domain's already
+		// loaded files — the switch eagerly JIT-loads the target pack — so the custom file loaded
+		// first keeps precedence over the pack.
+		unload_textdomain( 'woocommerce' );
 		load_textdomain( 'woocommerce', $custom_translation_path, $locale );
-		load_textdomain( 'woocommerce', WP_LANG_DIR . '/plugins/woocommerce-' . $locale . '.mo', $locale );
+		load_textdomain( 'woocommerce', WP_LANG_DIR . '/plugins/woocommerce-' . $file_locale . '.mo', $locale );
 	}
 }

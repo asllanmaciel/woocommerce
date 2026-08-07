@@ -219,6 +219,10 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 			$this->assertSame( 'fr_FR', SiteLocale::get() );
 			$this->assertNotSame( 'fr_FR', determine_locale(), 'The request must run in a different locale so run() has to switch.' );
 
+			// Touch the domain first, as any real admin screen does: the switcher then eagerly
+			// JIT-loads the target pack during the switch, before the custom file is layered.
+			_x( 'product', 'slug', 'woocommerce' );
+
 			$slug_inside = SiteLocale::run( static fn(): string => _x( 'product', 'slug', 'woocommerce' ) );
 
 			$this->assertSame( 'produit-custom', $slug_inside, 'A switched request must resolve the same custom override a site-locale request resolves.' );
@@ -281,6 +285,7 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 
 			$this->assertSame( 'produkt-custom', $no_switch_slug, 'The no-switch request should resolve the plugin_locale translation.' );
 			$this->assertSame( $no_switch_slug, $switched_slug, 'Both request shapes must resolve the same plugin_locale translation.' );
+			$this->assertSame( 'fr_FR', \WP_Translation_Controller::get_instance()->get_locale(), 'The pinned translation locale must not leak into the controller after run().' );
 		} finally {
 			remove_filter( 'locale', $filter_visitor_locale, 5 );
 			remove_filter( 'plugin_locale', $pin_plugin_locale );
