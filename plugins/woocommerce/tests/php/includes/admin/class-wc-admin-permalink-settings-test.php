@@ -21,6 +21,7 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	public function setUp(): void {
 		parent::setUp();
 		set_current_screen( 'options-permalink' );
+		require_once WC_ABSPATH . 'includes/admin/wc-admin-functions.php';
 		require_once WC_ABSPATH . 'includes/admin/class-wc-admin-permalink-settings.php';
 	}
 
@@ -65,32 +66,16 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	 * @return int Shop page ID.
 	 */
 	private function ensure_shop_page(): int {
-		$shop_page_id = wc_get_page_id( 'shop' );
-
-		if ( $shop_page_id > 0 && get_post( $shop_page_id ) ) {
-			return $shop_page_id;
-		}
-
-		$shop_page_id = (int) wp_insert_post(
-			array(
-				'post_type'   => 'page',
-				'post_status' => 'publish',
-				'post_title'  => 'Shop',
-				'post_name'   => 'shop',
-			)
-		);
-		update_option( 'woocommerce_shop_page_id', $shop_page_id );
-
-		return $shop_page_id;
+		return (int) wc_create_page( 'shop', 'woocommerce_shop_page_id', 'Shop' );
 	}
 
 	/**
-	 * Return a translation filter that distinguishes French permalink slugs from English ones.
+	 * Register a translation filter that renders permalink slugs in French for fr_FR requests.
 	 *
-	 * @return Closure Translation filter callback.
+	 * Removal runs from the cleanup registry, so call sites need no try/finally unwinding.
 	 */
-	private function get_french_permalink_slug_filter(): Closure {
-		return static function ( string $translation, string $text, string $context, string $domain ): string {
+	private function activate_french_permalink_slug_translations(): void {
+		$translate_permalink_slugs = static function ( string $translation, string $text, string $context, string $domain ): string {
 			if ( 'woocommerce' !== $domain || ! in_array( $context, array( 'slug', 'default-slug' ), true ) || 'fr_FR' !== determine_locale() ) {
 				return $translation;
 			}
@@ -103,6 +88,55 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 
 			return $translations[ $text ] ?? $translation;
 		};
+
+		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
+		$this->registered_cleanups[] = static function () use ( $translate_permalink_slugs ): void {
+			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
+		};
+	}
+
+	/**
+	 * Register a `locale` filter that pins the request locale, WPML/Polylang-style.
+	 *
+	 * Removal runs from the cleanup registry, so call sites need no try/finally unwinding.
+	 *
+	 * @param string $locale Locale the filter should report for the current request.
+	 */
+	private function add_visitor_locale_filter( string $locale ): void {
+		$filter_locale = static fn(): string => $locale;
+
+		add_filter( 'locale', $filter_locale, 5 );
+		$this->registered_cleanups[] = static function () use ( $filter_locale ): void {
+			remove_filter( 'locale', $filter_locale, 5 );
+		};
+	}
+
+	/**
+	 * Establish a temporary locale switch that unwinds from the cleanup registry.
+	 *
+	 * @param string $locale Locale to switch to.
+	 */
+	private function switch_locale_temporarily( string $locale ): void {
+		$this->assertTrue( switch_to_locale( $locale ), "The test should establish a temporary switch to {$locale}." );
+		$this->registered_cleanups[] = static function (): void {
+			restore_previous_locale();
+		};
+	}
+
+	/**
+	 * Simulate an admin request whose user locale (fr_FR) diverges from the en_US site locale.
+	 */
+	private function set_up_french_admin_user(): void {
+		$user_id = self::factory()->user->create(
+			array(
+				'role'   => 'administrator',
+				'locale' => 'fr_FR',
+			)
+		);
+		wp_set_current_user( $user_id );
+
+		$this->assertSame( 'en_US', get_locale(), 'The site locale should remain English.' );
+		$this->assertSame( 'fr_FR', determine_locale(), 'The admin request should use the current user locale.' );
 	}
 
 	/**
@@ -169,15 +203,7 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	private function render_settings(): string {
 		$sut = new WC_Admin_Permalink_Settings();
 
-		ob_start();
-		try {
-			$sut->settings();
-			$output = (string) ob_get_contents();
-		} finally {
-			ob_end_clean();
-		}
-
-		return $output;
+		return (string) $this->capture_output_from( array( $sut, 'settings' ) );
 	}
 
 	/**
@@ -241,25 +267,10 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	 */
 	public function test_default_structure_stays_checked_when_user_and_site_locales_differ(): void {
 		$this->ensure_shop_page();
-		$user_id = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
+		$this->set_up_french_admin_user();
+		$this->activate_french_permalink_slug_translations();
 
-		$translate_permalink_slugs = $this->get_french_permalink_slug_filter();
-
-		$this->assertSame( 'en_US', get_locale(), 'The site locale should remain English.' );
-		$this->assertSame( 'fr_FR', determine_locale(), 'The admin request should use the current user locale.' );
-
-		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
-		try {
-			$html = $this->save_and_render( '' );
-		} finally {
-			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
-		}
+		$html = $this->save_and_render( '' );
 
 		$this->assertSame( 'product', get_option( 'woocommerce_permalinks' )['product_base'], 'Default base should be stored in the site locale.' );
 		$this->assert_only_radio_checked( $html, 'default' );
@@ -270,25 +281,10 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	 */
 	public function test_default_structure_exposes_site_locale_value_for_custom_input(): void {
 		$this->ensure_shop_page();
-		$user_id = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
+		$this->set_up_french_admin_user();
+		$this->activate_french_permalink_slug_translations();
 
-		$translate_permalink_slugs = $this->get_french_permalink_slug_filter();
-
-		$this->assertSame( 'en_US', get_locale(), 'The site locale should remain English.' );
-		$this->assertSame( 'fr_FR', determine_locale(), 'The admin request should use the current user locale.' );
-
-		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
-		try {
-			$html = $this->save_and_render( '' );
-		} finally {
-			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
-		}
+		$html = $this->save_and_render( '' );
 
 		$this->assertSame( 'product', get_option( 'woocommerce_permalinks' )['product_base'], 'The legacy Default base should remain stored without slashes.' );
 
@@ -320,21 +316,13 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	public function test_default_structure_stays_checked_on_filtered_locale_installs_without_saved_permalinks(): void {
 		$this->ensure_shop_page();
 		delete_option( 'woocommerce_permalinks' );
+		$this->add_visitor_locale_filter( 'fr_FR' );
+		$this->activate_french_permalink_slug_translations();
 
-		$filter_locale             = static fn(): string => 'fr_FR';
-		$translate_permalink_slugs = $this->get_french_permalink_slug_filter();
+		// First contact persists the defaults, before the merchant ever opens the screen.
+		wc_get_permalink_structure();
 
-		add_filter( 'locale', $filter_locale, 5 );
-		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
-		try {
-			// First contact persists the defaults, before the merchant ever opens the screen.
-			wc_get_permalink_structure();
-
-			$html = $this->render_settings();
-		} finally {
-			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
-			remove_filter( 'locale', $filter_locale, 5 );
-		}
+		$html = $this->render_settings();
 
 		$this->assertSame( 'product', get_option( 'woocommerce_permalinks' )['product_base'], 'The initialized Default base should use the deterministic site locale, not the visitor language.' );
 		$this->assert_only_radio_checked( $html, 'default' );
@@ -346,18 +334,10 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	public function test_default_structure_save_is_deterministic_under_a_visitor_locale_filter(): void {
 		$this->ensure_shop_page();
 		$this->add_switchable_locale( 'fr_FR' );
+		$this->add_visitor_locale_filter( 'fr_FR' );
+		$this->activate_french_permalink_slug_translations();
 
-		$filter_locale             = static fn(): string => 'fr_FR';
-		$translate_permalink_slugs = $this->get_french_permalink_slug_filter();
-
-		add_filter( 'locale', $filter_locale, 5 );
-		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
-		try {
-			$html = $this->save_and_render( '' );
-		} finally {
-			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
-			remove_filter( 'locale', $filter_locale, 5 );
-		}
+		$html = $this->save_and_render( '' );
 
 		$this->assertSame( 'product', get_option( 'woocommerce_permalinks' )['product_base'], 'Saving Default must store the site-locale base regardless of the request language.' );
 		$this->assert_only_radio_checked( $html, 'default' );
@@ -367,26 +347,11 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	 * @testdox Should initialize missing permalink defaults in the site locale.
 	 */
 	public function test_missing_permalink_defaults_are_initialized_in_site_locale(): void {
-		$user_id = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
-
-		$this->assertSame( 'en_US', get_locale(), 'The site locale should remain English.' );
-		$this->assertSame( 'fr_FR', determine_locale(), 'The admin request should use the current user locale.' );
-
+		$this->set_up_french_admin_user();
 		delete_option( 'woocommerce_permalinks' );
-		$translate_permalink_slugs = $this->get_french_permalink_slug_filter();
+		$this->activate_french_permalink_slug_translations();
 
-		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
-		try {
-			$permalinks = wc_get_permalink_structure();
-		} finally {
-			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
-		}
+		$permalinks = wc_get_permalink_structure();
 
 		$saved_permalinks = get_option( 'woocommerce_permalinks' );
 
@@ -401,13 +366,7 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	 * @testdox Should initialize missing permalink defaults without using an uninitialized WooCommerce instance.
 	 */
 	public function test_missing_permalink_defaults_do_not_use_uninitialized_woocommerce(): void {
-		$user_id = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
+		$this->set_up_french_admin_user();
 		delete_option( 'woocommerce_permalinks' );
 
 		$accessor_only_woocommerce = new class() {
@@ -431,16 +390,10 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 		$original_instance         = $instance_property->getValue();
 		$woocommerce_global_is_set = array_key_exists( 'woocommerce', $GLOBALS );
 		$original_woocommerce      = $GLOBALS['woocommerce'] ?? null;
-		$translate_permalink_slugs = $this->get_french_permalink_slug_filter();
 
 		$instance_property->setValue( null, $accessor_only_woocommerce );
 		unset( $GLOBALS['woocommerce'] );
-		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
-
-		try {
-			$permalinks = wc_get_permalink_structure();
-		} finally {
-			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
+		$this->registered_cleanups[] = static function () use ( $instance_property, $original_instance, $woocommerce_global_is_set, $original_woocommerce ): void {
 			$instance_property->setValue( null, $original_instance );
 
 			if ( $woocommerce_global_is_set ) {
@@ -448,7 +401,10 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 			} else {
 				unset( $GLOBALS['woocommerce'] );
 			}
-		}
+		};
+		$this->activate_french_permalink_slug_translations();
+
+		$permalinks = wc_get_permalink_structure();
 
 		$this->assertSame( 'product', $permalinks['product_base'], 'The returned product base should still use the site locale.' );
 		$this->assertSame( 'fr_FR', determine_locale(), 'The admin request locale should be restored.' );
@@ -466,17 +422,10 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	 */
 	public function test_missing_permalink_defaults_ignore_the_visitor_locale_filter(): void {
 		delete_option( 'woocommerce_permalinks' );
-		$filter_locale             = static fn(): string => 'fr_FR';
-		$translate_permalink_slugs = $this->get_french_permalink_slug_filter();
+		$this->add_visitor_locale_filter( 'fr_FR' );
+		$this->activate_french_permalink_slug_translations();
 
-		add_filter( 'locale', $filter_locale, 5 );
-		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
-		try {
-			$permalinks = wc_get_permalink_structure();
-		} finally {
-			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
-			remove_filter( 'locale', $filter_locale, 5 );
-		}
+		$permalinks = wc_get_permalink_structure();
 
 		$this->assertSame( 'product', $permalinks['product_base'], 'The visitor language filter must not decide the stored defaults.' );
 		$this->assertSame( 'product', get_option( 'woocommerce_permalinks' )['product_base'], 'The stored product base should use the deterministic site locale.' );
@@ -492,22 +441,14 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 		global $wp_locale_switcher;
 
 		$this->add_switchable_locale( 'fr_FR' );
-
-		$this->assertTrue( switch_to_locale( 'fr_FR' ), 'The test should establish a temporary switch away from the site locale.' );
+		$this->switch_locale_temporarily( 'fr_FR' );
 		delete_option( 'woocommerce_permalinks' );
+		$this->activate_french_permalink_slug_translations();
 
-		$translate_permalink_slugs = $this->get_french_permalink_slug_filter();
+		$permalinks = wc_get_permalink_structure();
 
-		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
-		try {
-			$permalinks = wc_get_permalink_structure();
-
-			$this->assertSame( 'product', $permalinks['product_base'], 'A temporary locale switch must not leak into the stored defaults.' );
-			$this->assertSame( 'fr_FR', $wp_locale_switcher->get_switched_locale(), 'The temporary switch should remain on the stack.' );
-		} finally {
-			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
-			restore_previous_locale();
-		}
+		$this->assertSame( 'product', $permalinks['product_base'], 'A temporary locale switch must not leak into the stored defaults.' );
+		$this->assertSame( 'fr_FR', $wp_locale_switcher->get_switched_locale(), 'The temporary switch should remain on the stack.' );
 	}
 
 	/**
@@ -520,26 +461,15 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 		global $wp_locale_switcher;
 
 		$this->add_switchable_locale( 'fr_FR' );
-
-		$filter_locale = static fn(): string => 'de_DE';
-		add_filter( 'locale', $filter_locale, 5 );
-
-		$this->assertTrue( switch_to_locale( 'fr_FR' ), 'The test should establish a temporary switch away from the site locale.' );
+		$this->add_visitor_locale_filter( 'de_DE' );
+		$this->switch_locale_temporarily( 'fr_FR' );
 		delete_option( 'woocommerce_permalinks' );
+		$this->activate_french_permalink_slug_translations();
 
-		$translate_permalink_slugs = $this->get_french_permalink_slug_filter();
+		$permalinks = wc_get_permalink_structure();
 
-		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
-		try {
-			$permalinks = wc_get_permalink_structure();
-
-			$this->assertSame( 'product', $permalinks['product_base'], 'Neither the locale filter nor the temporary switch may leak into the stored defaults.' );
-			$this->assertSame( 'fr_FR', $wp_locale_switcher->get_switched_locale(), 'The temporary switch should remain on the stack.' );
-		} finally {
-			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
-			restore_previous_locale();
-			remove_filter( 'locale', $filter_locale, 5 );
-		}
+		$this->assertSame( 'product', $permalinks['product_base'], 'Neither the locale filter nor the temporary switch may leak into the stored defaults.' );
+		$this->assertSame( 'fr_FR', $wp_locale_switcher->get_switched_locale(), 'The temporary switch should remain on the stack.' );
 	}
 
 	/**
@@ -548,25 +478,14 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	public function test_missing_permalink_defaults_preserve_existing_site_locale_switch(): void {
 		global $wp_locale_switcher;
 
-		$user_id = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
-
-		$this->assertTrue( switch_to_locale( 'en_US' ), 'The test should establish an outer switch to the site locale.' );
+		$this->set_up_french_admin_user();
+		$this->switch_locale_temporarily( 'en_US' );
 		delete_option( 'woocommerce_permalinks' );
 
-		try {
-			$permalinks = wc_get_permalink_structure();
+		$permalinks = wc_get_permalink_structure();
 
-			$this->assertSame( 'product', $permalinks['product_base'], 'The product base should use the active site locale.' );
-			$this->assertSame( 'en_US', $wp_locale_switcher->get_switched_locale(), 'The existing locale switch should remain on the stack.' );
-		} finally {
-			restore_previous_locale();
-		}
+		$this->assertSame( 'product', $permalinks['product_base'], 'The product base should use the active site locale.' );
+		$this->assertSame( 'en_US', $wp_locale_switcher->get_switched_locale(), 'The existing locale switch should remain on the stack.' );
 	}
 
 	/**
@@ -577,35 +496,27 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 
 		$original_locale = $GLOBALS['locale'] ?? null;
 		$subsite_id      = self::factory()->blog->create();
-		$user_id         = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
+		$this->set_up_french_admin_user();
 		switch_to_blog( $subsite_id );
+		$this->registered_cleanups[] = static function (): void {
+			restore_current_blog();
+		};
 		update_option( 'WPLANG', 'en_US' );
 		delete_option( 'woocommerce_permalinks' );
 
 		// phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Simulate cross-blog locale caching.
-		$GLOBALS['locale']         = 'fr_FR';
-		$translate_permalink_slugs = $this->get_french_permalink_slug_filter();
-
-		add_filter( 'gettext_with_context', $translate_permalink_slugs, 10, 4 );
-		try {
-			$permalinks = wc_get_permalink_structure();
-		} finally {
-			remove_filter( 'gettext_with_context', $translate_permalink_slugs, 10 );
-			restore_current_blog();
-
+		$GLOBALS['locale']           = 'fr_FR';
+		$this->registered_cleanups[] = static function () use ( $original_locale ): void {
 			if ( null === $original_locale ) {
 				unset( $GLOBALS['locale'] );
 			} else {
 				// phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited -- Restore test state.
 				$GLOBALS['locale'] = $original_locale;
 			}
-		}
+		};
+		$this->activate_french_permalink_slug_translations();
+
+		$permalinks = wc_get_permalink_structure();
 
 		$this->assertSame( 'product', $permalinks['product_base'], 'The product base should use the current subsite locale rather than the originating site locale cached in memory.' );
 	}

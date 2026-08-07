@@ -12,6 +12,22 @@ use WC_Unit_Test_Case;
 class SiteLocaleTest extends WC_Unit_Test_Case {
 
 	/**
+	 * Simulate an admin request whose user locale (fr_FR) diverges from the en_US site locale.
+	 */
+	private function set_up_french_admin_request(): void {
+		$user_id = self::factory()->user->create(
+			array(
+				'role'   => 'administrator',
+				'locale' => 'fr_FR',
+			)
+		);
+		wp_set_current_user( $user_id );
+		set_current_screen( 'options-permalink' );
+
+		$this->assertSame( 'fr_FR', determine_locale(), 'The admin request should use the user locale before running.' );
+	}
+
+	/**
 	 * @testdox Should resolve the site locale from the WPLANG option.
 	 */
 	public function test_get_resolves_the_wplang_option(): void {
@@ -55,16 +71,7 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	 * @testdox Should run the callback under the site locale and restore the request locale.
 	 */
 	public function test_run_executes_under_site_locale_and_restores(): void {
-		$user_id = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
-		set_current_screen( 'options-permalink' );
-
-		$this->assertSame( 'fr_FR', determine_locale(), 'The admin request should use the user locale before running.' );
+		$this->set_up_french_admin_request();
 
 		$locale_inside = SiteLocale::run( 'determine_locale' );
 
@@ -77,20 +84,12 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	 */
 	public function test_run_falls_back_to_en_us_when_site_locale_is_unavailable(): void {
 		$filter_site_locale = static fn(): string => 'zz_ZZ';
-		$user_id            = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
 
+		$this->set_up_french_admin_request();
 		add_filter( 'pre_option_WPLANG', $filter_site_locale );
-		wp_set_current_user( $user_id );
-		set_current_screen( 'options-permalink' );
 
 		try {
 			$this->assertNotContains( 'zz_ZZ', get_available_languages(), 'The configured site locale must be unavailable for this regression test.' );
-			$this->assertSame( 'fr_FR', determine_locale(), 'The admin request should use the user locale before running.' );
 
 			$locale_inside = SiteLocale::run( 'determine_locale' );
 
@@ -116,14 +115,7 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	 * @testdox Should leave hook registrations untouched, including an enclosing window's.
 	 */
 	public function test_run_does_not_touch_plugin_locale_registrations(): void {
-		$user_id = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
-		set_current_screen( 'options-permalink' );
+		$this->set_up_french_admin_request();
 
 		$this->assertFalse( has_filter( 'plugin_locale', 'get_locale' ), 'The filter should be absent before running.' );
 
@@ -147,14 +139,7 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	 * @testdox Should resolve translations under the site locale rather than the request locale.
 	 */
 	public function test_run_resolves_translations_under_the_site_locale(): void {
-		$user_id = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
-		set_current_screen( 'options-permalink' );
+		$this->set_up_french_admin_request();
 
 		$translate_slug = static fn( string $translation, string $text, string $context ): string =>
 			( 'slug' === $context && 'product' === $text ) ? 'produit' : $translation;
@@ -181,14 +166,7 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	 * @testdox Should restore the request locale when the callback throws.
 	 */
 	public function test_run_restores_the_locale_when_the_callback_throws(): void {
-		$user_id = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
-		set_current_screen( 'options-permalink' );
+		$this->set_up_french_admin_request();
 
 		try {
 			SiteLocale::run(

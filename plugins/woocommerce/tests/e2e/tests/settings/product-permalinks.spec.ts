@@ -22,6 +22,15 @@ test.describe( 'Product permalink settings', () => {
 		);
 		const customBase = page.locator( '#woocommerce_permalink_structure' );
 		const saveChanges = page.locator( '#submit' );
+		const saveAndWaitForSubmit = () =>
+			Promise.all( [
+				page.waitForResponse(
+					( response ) =>
+						response.request().method() === 'POST' &&
+						response.url().includes( 'options-permalink.php' )
+				),
+				saveChanges.click(),
+			] );
 
 		await expect( productPermalinkRadios ).toHaveCount( 4 );
 
@@ -71,14 +80,7 @@ test.describe( 'Product permalink settings', () => {
 			await expect( defaultRadio ).toHaveValue( '' );
 			await expect( customBase ).toHaveValue( expectedDefaultBase );
 
-			await Promise.all( [
-				page.waitForResponse(
-					( response ) =>
-						response.request().method() === 'POST' &&
-						response.url().includes( 'options-permalink.php' )
-				),
-				saveChanges.click(),
-			] );
+			await saveAndWaitForSubmit();
 
 			await expect( defaultRadio ).toBeChecked();
 			await expect( defaultRadio ).toHaveValue( '' );
@@ -86,25 +88,12 @@ test.describe( 'Product permalink settings', () => {
 		} finally {
 			await page.goto( 'wp-admin/options-permalink.php' );
 
-			const originalRadio = page
-				.locator( 'input[name="product_permalink"]' )
-				.nth( originalCheckedIndex );
-
-			await originalRadio.check();
+			await productPermalinkRadios.nth( originalCheckedIndex ).check();
 			if ( originalCheckedIndex === 3 ) {
-				await page
-					.locator( '#woocommerce_permalink_structure' )
-					.fill( originalCustomBase );
+				await customBase.fill( originalCustomBase );
 			}
 
-			await Promise.all( [
-				page.waitForResponse(
-					( response ) =>
-						response.request().method() === 'POST' &&
-						response.url().includes( 'options-permalink.php' )
-				),
-				page.locator( '#submit' ).click(),
-			] );
+			await saveAndWaitForSubmit();
 		}
 	} );
 } );
