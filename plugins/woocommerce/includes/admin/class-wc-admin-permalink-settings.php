@@ -120,13 +120,7 @@ class WC_Admin_Permalink_Settings {
 		 */
 		$structures_for_comparison = array_map( 'wc_sanitize_permalink', $structures );
 
-		$default_product_base = wc_sanitize_permalink(
-			SiteLocale::run(
-				static function () {
-					return _x( 'product', 'slug', 'woocommerce' );
-				}
-			)
-		);
+		$default_product_base = wc_sanitize_permalink( $this->get_site_locale_product_slug() );
 
 		$structures_for_comparison[0] = $default_product_base;
 
@@ -190,6 +184,23 @@ class WC_Admin_Permalink_Settings {
 	}
 
 	/**
+	 * Get the product slug translated in the deterministic site locale.
+	 *
+	 * Shared by settings() and settings_save() so the rendered checked-state and the stored
+	 * Default base can never diverge — the divergence that caused
+	 * https://github.com/woocommerce/woocommerce/issues/29050.
+	 *
+	 * @return string Unsanitized product slug. Callers sanitize with wc_sanitize_permalink().
+	 */
+	private function get_site_locale_product_slug(): string {
+		return (string) SiteLocale::run(
+			static function () {
+				return _x( 'product', 'slug', 'woocommerce' );
+			}
+		);
+	}
+
+	/**
 	 * Save the settings.
 	 */
 	public function settings_save() {
@@ -232,11 +243,7 @@ class WC_Admin_Permalink_Settings {
 			} elseif ( empty( $product_base ) ) {
 				// The stored Default base must be the deterministic site-locale slug, matching
 				// what wc_get_permalink_structure() initializes and what settings() compares against.
-				$product_base = SiteLocale::run(
-					static function () {
-						return _x( 'product', 'slug', 'woocommerce' );
-					}
-				);
+				$product_base = $this->get_site_locale_product_slug();
 			}
 
 			$permalinks['product_base'] = wc_sanitize_permalink( $product_base );
