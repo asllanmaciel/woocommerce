@@ -206,12 +206,21 @@ class WC_Admin_Permalink_Settings {
 			$permalinks['tag_base']       = wc_sanitize_permalink( wp_unslash( $_POST['woocommerce_product_tag_slug'] ) ); // WPCS: input var ok, sanitization ok.
 			$permalinks['attribute_base'] = wc_sanitize_permalink( wp_unslash( $_POST['woocommerce_product_attribute_slug'] ) ); // WPCS: input var ok, sanitization ok.
 
-			// Generate product base.
-			$product_base = isset( $_POST['product_permalink'] ) ? wc_clean( wp_unslash( $_POST['product_permalink'] ) ) : ''; // WPCS: input var ok, sanitization ok.
+			/*
+			 * Generate product base. Both inputs always post a scalar; a non-scalar is bogus input
+			 * and is coerced to the empty string, which the Default branch below resolves normally.
+			 * Without that guard an array reaches trim() (a TypeError on PHP 8) and
+			 * wc_sanitize_permalink(), which both expect a string.
+			 */
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized on the next line.
+			$posted_product_base = isset( $_POST['product_permalink'] ) && is_scalar( $_POST['product_permalink'] ) ? wp_unslash( $_POST['product_permalink'] ) : '';
+			$product_base        = sanitize_text_field( (string) $posted_product_base );
 
 			if ( 'custom' === $product_base ) {
-				if ( isset( $_POST['product_permalink_structure'] ) ) { // WPCS: input var ok.
-					$product_base = preg_replace( '#/+#', '/', '/' . str_replace( '#', '', trim( wp_unslash( $_POST['product_permalink_structure'] ) ) ) ); // WPCS: input var ok, sanitization ok.
+				if ( isset( $_POST['product_permalink_structure'] ) && is_scalar( $_POST['product_permalink_structure'] ) ) {
+					// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized by wc_sanitize_permalink() below.
+					$posted_structure = trim( (string) wp_unslash( $_POST['product_permalink_structure'] ) );
+					$product_base     = (string) preg_replace( '#/+#', '/', '/' . str_replace( '#', '', $posted_structure ) );
 				} else {
 					$product_base = '/';
 				}
