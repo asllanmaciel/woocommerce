@@ -30,6 +30,8 @@ class SiteLocale {
 	 * this resolve differently from WordPress itself.
 	 *
 	 * @return string The site locale, e.g. 'en_US'.
+	 *
+	 * @since 11.1.0
 	 */
 	public static function get(): string {
 		if ( is_multisite() && wp_installing() ) {
@@ -68,6 +70,8 @@ class SiteLocale {
 	 *
 	 * @param callable $callback The code to run under the site locale.
 	 * @return mixed The callback's return value.
+	 *
+	 * @since 11.1.0
 	 */
 	public static function run( callable $callback ) {
 		$site_locale         = self::get();
