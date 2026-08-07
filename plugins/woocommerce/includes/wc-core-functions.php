@@ -2159,10 +2159,9 @@ function wc_get_permalink_structure() {
 	};
 
 	/*
-	 * Missing defaults are persisted site-wide below, so they must resolve in the site's
-	 * deterministic locale rather than the current request's locale — this function runs on
-	 * every front-end request, and on multilingual sites the request locale is whatever
-	 * language the current visitor happens to browse in.
+	 * Missing defaults are persisted site-wide below, so they resolve in the site locale rather
+	 * than the request locale. This runs on every request, so otherwise whoever arrives first —
+	 * the activating admin, or any visitor on a multilingual site — decides what gets stored.
 	 */
 	$permalinks = $localized_defaults_are_missing ? SiteLocale::run( $compute_permalinks ) : $compute_permalinks();
 

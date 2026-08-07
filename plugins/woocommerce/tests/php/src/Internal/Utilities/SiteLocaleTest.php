@@ -109,12 +109,9 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	}
 
 	/**
-	 * run() deliberately registers no filters of its own: WP_Locale_Switcher already filters
-	 * `locale` and `determine_locale`, so the `plugin_locale` value that
-	 * WC()->load_plugin_textdomain() reads resolves to the switched locale without help.
-	 * Registering `plugin_locale` → `get_locale` here would also override any third-party
-	 * registration at the same priority, and tearing it down would strip the registration of
-	 * an enclosing wc_switch_to_site_locale() window.
+	 * run() registers no filters of its own. Adding `plugin_locale` → `get_locale` would override
+	 * any third-party registration at the same priority, and removing it would strip the
+	 * registration owned by an enclosing wc_switch_to_site_locale() window.
 	 *
 	 * @testdox Should leave hook registrations untouched, including an enclosing window's.
 	 */
@@ -134,8 +131,8 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 
 		$this->assertFalse( has_filter( 'plugin_locale', 'get_locale' ), 'run() must not leave a plugin_locale registration behind.' );
 
-		// An enclosing wc_switch_to_site_locale() window owns this registration and expects
-		// wc_restore_locale() to be the one that removes it.
+		// Stands in for an enclosing wc_switch_to_site_locale() window, which expects
+		// wc_restore_locale() to be what removes this.
 		add_filter( 'plugin_locale', 'get_locale' );
 		try {
 			SiteLocale::run( static fn() => null );
@@ -162,8 +159,7 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 		$translate_slug = static fn( string $translation, string $text, string $context ): string =>
 			( 'slug' === $context && 'product' === $text ) ? 'produit' : $translation;
 
-		// Stands in for a loaded fr_FR textdomain: the test environment has no language packs,
-		// so the switch is observed through a gettext filter that only applies while switched.
+		// Stands in for a loaded fr_FR textdomain, since the test environment has no language packs.
 		$maybe_translate = static function ( string $translation, string $text, string $context ) use ( $translate_slug ): string {
 			return 'fr_FR' === determine_locale() ? $translate_slug( $translation, $text, $context ) : $translation;
 		};

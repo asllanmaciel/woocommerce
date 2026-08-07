@@ -112,11 +112,10 @@ class WC_Admin_Permalink_Settings {
 		);
 
 		/*
-		 * Must match what settings_save() actually stores: wc_sanitize_permalink() strips the
-		 * trailing slash, and the Default structure is stored as the deterministic site-locale
-		 * translation — the same one wc_get_permalink_structure() persists when it initializes
-		 * missing defaults. Otherwise the matching radio never stays checked after a save.
-		 * See https://github.com/woocommerce/woocommerce/issues/29050.
+		 * Must match what settings_save() stores: wc_sanitize_permalink() strips the trailing
+		 * slash, and Default is stored as the site-locale translation that
+		 * wc_get_permalink_structure() persists. Otherwise no radio matches and the screen falls
+		 * through to Custom base. See https://github.com/woocommerce/woocommerce/issues/29050.
 		 */
 		$structures_for_comparison = array_map( 'wc_sanitize_permalink', $structures );
 
@@ -184,11 +183,10 @@ class WC_Admin_Permalink_Settings {
 	}
 
 	/**
-	 * Get the product slug translated in the deterministic site locale.
+	 * Get the product slug translated in the site locale.
 	 *
 	 * Shared by settings() and settings_save() so the rendered checked-state and the stored
-	 * Default base can never diverge — the divergence that caused
-	 * https://github.com/woocommerce/woocommerce/issues/29050.
+	 * Default base cannot diverge.
 	 *
 	 * @return string Unsanitized product slug. Callers sanitize with wc_sanitize_permalink().
 	 */
@@ -218,10 +216,9 @@ class WC_Admin_Permalink_Settings {
 			$permalinks['attribute_base'] = wc_sanitize_permalink( wp_unslash( $_POST['woocommerce_product_attribute_slug'] ) ); // WPCS: input var ok, sanitization ok.
 
 			/*
-			 * Generate product base. Both inputs always post a scalar; a non-scalar is bogus input
-			 * and is coerced to the empty string, which the Default branch below resolves normally.
-			 * Without that guard an array reaches trim() (a TypeError on PHP 8) and
-			 * wc_sanitize_permalink(), which both expect a string.
+			 * Generate product base. Both fields post a scalar; anything else is coerced to the
+			 * empty string, which the Default branch below resolves. Unguarded, an array reaches
+			 * trim() and wc_sanitize_permalink(), which both expect a string.
 			 */
 			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitized on the next line.
 			$posted_product_base = isset( $_POST['product_permalink'] ) && is_scalar( $_POST['product_permalink'] ) ? wp_unslash( $_POST['product_permalink'] ) : '';
@@ -241,8 +238,8 @@ class WC_Admin_Permalink_Settings {
 					$product_base = '/' . _x( 'product', 'slug', 'woocommerce' ) . $product_base;
 				}
 			} elseif ( empty( $product_base ) ) {
-				// The stored Default base must be the deterministic site-locale slug, matching
-				// what wc_get_permalink_structure() initializes and what settings() compares against.
+				// Store the site-locale slug that wc_get_permalink_structure() initializes and
+				// settings() compares against.
 				$product_base = $this->get_site_locale_product_slug();
 			}
 

@@ -47,20 +47,18 @@ test.describe( 'Product permalink settings', () => {
 						.textContent()
 				)?.trim() ?? ''
 			);
-			// Strip the site and sample-product paths from the preview so the test derives
-			// the canonical `/base/` without hardcoding a translated product slug.
-			// `/\/$/` drops a single trailing slash so a root install (`/`) contributes an
+			// Derive the canonical `/base/` from the preview rather than hardcoding a translated
+			// product slug. `/\/$/` drops the trailing slash so a root install contributes an
 			// empty prefix and a subdirectory install (`/wp/`) contributes `/wp`.
 			const sitePath = new URL( baseURL ).pathname.replace( /\/$/, '' );
-			// Fail loudly here rather than silently deriving a wrong base if the rendered
-			// preview ever stops using the `sample-product` example.
+			// Assert the example segment first, so a changed preview fails here instead of
+			// silently yielding a wrong base.
 			expect( defaultPreview.pathname ).toMatch( /\/sample-product\/$/ );
-			// `/sample-product\/$/` removes that example segment only at the end of the path.
 			const expectedDefaultBase = defaultPreview.pathname
 				.slice( sitePath.length )
 				.replace( /sample-product\/$/, '' );
 
-			// The derived base must be a non-empty, slash-delimited path such as `/product/`.
+			// A non-empty, slash-delimited path such as `/product/`.
 			expect( expectedDefaultBase ).toMatch( /^\/.+\/$/ );
 			await expect( customBase ).toHaveValue( expectedDefaultBase );
 

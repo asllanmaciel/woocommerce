@@ -27,10 +27,8 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	/**
 	 * Reset superglobals after each test.
 	 *
-	 * Option changes made during the test (e.g. `woocommerce_permalinks`,
-	 * `woocommerce_shop_page_id`) don't need manual restoration here: WC_Unit_Test_Case
-	 * wraps every test in a DB transaction and flushes the object cache in its own
-	 * tearDown(), so option state always reverts to its pre-test baseline automatically.
+	 * Options changed during a test need no manual restoration: WC_Unit_Test_Case wraps each test
+	 * in a DB transaction and flushes the object cache, so option state reverts on its own.
 	 */
 	public function tearDown(): void {
 		foreach ( array_reverse( $this->registered_cleanups ) as $cleanup ) {
@@ -111,8 +109,7 @@ class WC_Admin_Permalink_Settings_Test extends WC_Unit_Test_Case {
 	 * Make switch_to_locale() treat the given locale as installed.
 	 *
 	 * The test environment ships no language packs and WP_Locale_Switcher captures the available
-	 * languages at bootstrap, so a real switch to any non-en_US locale silently fails without this.
-	 * Restoration is registered for tearDown(), so it runs even when an assertion fails mid-test.
+	 * languages at bootstrap, so a switch to any non-en_US locale silently fails without this.
 	 *
 	 * @param string $locale Locale to mark as switchable.
 	 */
