@@ -73,6 +73,35 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	}
 
 	/**
+	 * @testdox Should fall back to en_US when the configured site locale is unavailable.
+	 */
+	public function test_run_falls_back_to_en_us_when_site_locale_is_unavailable(): void {
+		$filter_site_locale = static fn(): string => 'zz_ZZ';
+		$user_id            = self::factory()->user->create(
+			array(
+				'role'   => 'administrator',
+				'locale' => 'fr_FR',
+			)
+		);
+
+		add_filter( 'pre_option_WPLANG', $filter_site_locale );
+		wp_set_current_user( $user_id );
+		set_current_screen( 'options-permalink' );
+
+		try {
+			$this->assertNotContains( 'zz_ZZ', get_available_languages(), 'The configured site locale must be unavailable for this regression test.' );
+			$this->assertSame( 'fr_FR', determine_locale(), 'The admin request should use the user locale before running.' );
+
+			$locale_inside = SiteLocale::run( 'determine_locale' );
+
+			$this->assertSame( 'en_US', $locale_inside, 'An unavailable site locale should use untranslated source strings, not the request locale.' );
+			$this->assertSame( 'fr_FR', determine_locale(), 'The request locale should be restored afterwards.' );
+		} finally {
+			remove_filter( 'pre_option_WPLANG', $filter_site_locale );
+		}
+	}
+
+	/**
 	 * @testdox Should return the callback result unchanged when no locale switch is needed.
 	 */
 	public function test_run_passes_through_without_a_switch(): void {

@@ -17,6 +17,7 @@ use Closure;
  * @since 11.1.0
  */
 class SiteLocale {
+	private const FALLBACK_LOCALE = 'en_US';
 
 	/**
 	 * Resolve the site's configured locale from stored settings, bypassing request state.
@@ -44,16 +45,18 @@ class SiteLocale {
 			$site_locale = defined( 'WPLANG' ) ? WPLANG : ( $GLOBALS['wp_local_package'] ?? '' );
 		}
 
-		return empty( $site_locale ) ? 'en_US' : (string) $site_locale;
+		return empty( $site_locale ) ? self::FALLBACK_LOCALE : (string) $site_locale;
 	}
 
 	/**
 	 * Run a callback with translations loaded for the site locale.
 	 *
 	 * Switches the locale — and reloads the WooCommerce textdomain — only when the current
-	 * request locale differs from the site locale, and restores everything afterwards, even
-	 * when the callback throws. The WooCommerce instance is read from the global rather than
-	 * the WC() accessor so this stays safe before WooCommerce finishes initializing.
+	 * request locale differs from the site locale. If the configured locale is unavailable,
+	 * the callback runs under en_US so untranslated source strings are used deterministically.
+	 * Everything is restored afterwards, even when the callback throws. The WooCommerce
+	 * instance is read from the global rather than the WC() accessor so this stays safe before
+	 * WooCommerce finishes initializing.
 	 *
 	 * Nesting-safe: the `plugin_locale` filter is only added when absent and only removed when
 	 * this call added it, so an enclosing wc_switch_to_site_locale() window keeps its own
@@ -64,14 +67,19 @@ class SiteLocale {
 	 */
 	public static function run( callable $callback ) {
 		$site_locale                   = self::get();
+		$current_locale                = determine_locale();
 		$locale_was_switched           = false;
 		$reload_woocommerce_textdomain = null;
 		$added_plugin_locale_filter    = false;
 
 		try {
 			// determine_locale() may reflect a temporary locale switch, a locale filter, or a different blog's cached locale.
-			if ( determine_locale() !== $site_locale && function_exists( 'switch_to_locale' ) ) {
+			if ( $current_locale !== $site_locale && function_exists( 'switch_to_locale' ) ) {
 				$locale_was_switched = switch_to_locale( $site_locale );
+
+				if ( ! $locale_was_switched && self::FALLBACK_LOCALE !== $current_locale ) {
+					$locale_was_switched = switch_to_locale( self::FALLBACK_LOCALE );
+				}
 
 				if ( $locale_was_switched ) {
 					$woocommerce                      = $GLOBALS['woocommerce'] ?? null;
