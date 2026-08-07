@@ -3,8 +3,6 @@ declare( strict_types=1 );
 
 namespace Automattic\WooCommerce\Internal\Utilities;
 
-use Closure;
-
 /**
  * Utility for resolving the site's configured locale deterministically and running code under it.
  *
@@ -27,6 +25,12 @@ class SiteLocale {
 	 * `locale` filter: the cache can be stale after switch_to_blog(), and the filter reflects
 	 * a temporary locale switch or the current visitor's language on multilingual sites.
 	 * The result is deterministic for a given site configuration, whichever request asks.
+	 *
+	 * WordPress exposes no unfiltered equivalent — get_locale(), determine_locale() and
+	 * get_user_locale() are all filtered — so the chain has to be mirrored here. Keep the
+	 * branches below in step with wp-includes/l10n.php::get_locale(); each one corresponds to
+	 * a real configuration (network default, wp-config.php constant, localized WP build) and
+	 * dropping any of them makes this resolve differently from WordPress itself.
 	 *
 	 * @return string The site locale, e.g. 'en_US'.
 	 */
@@ -51,26 +55,27 @@ class SiteLocale {
 	/**
 	 * Run a callback with translations loaded for the site locale.
 	 *
-	 * Switches the locale — and reloads the WooCommerce textdomain — only when the current
-	 * request locale differs from the site locale. If the configured locale is unavailable,
-	 * the callback runs under en_US so untranslated source strings are used deterministically.
-	 * Everything is restored afterwards, even when the callback throws. The WooCommerce
-	 * instance is read from the global rather than the WC() accessor so this stays safe before
-	 * WooCommerce finishes initializing.
+	 * Switches the locale only when the current request locale differs from the site locale.
+	 * If the configured locale is unavailable, the callback runs under en_US so untranslated
+	 * source strings are used deterministically. The previous locale is restored afterwards,
+	 * even when the callback throws.
 	 *
-	 * Nesting-safe: the `plugin_locale` filter is only added when absent and only removed when
-	 * this call added it, so an enclosing wc_switch_to_site_locale() window keeps its own
-	 * registration intact.
+	 * Reloading the WooCommerce textdomain here would be redundant. Since WordPress 6.1 —
+	 * well below the 6.9 minimum this plugin requires — WP_Locale_Switcher::load_translations()
+	 * unloads every loaded textdomain as reloadable and lets it JIT-reload under the new
+	 * locale, and the switcher filters both `locale` and `determine_locale`, so the
+	 * `plugin_locale` value that WC()->load_plugin_textdomain() reads already resolves to the
+	 * switched locale. The one case it would still cover is a site layering a non-standard
+	 * custom WP_LANG_DIR/woocommerce/*.mo file, which core's JIT reload does not know about;
+	 * that trade-off is accepted here in exchange for not carrying the filter machinery.
 	 *
 	 * @param callable $callback The code to run under the site locale.
 	 * @return mixed The callback's return value.
 	 */
 	public static function run( callable $callback ) {
-		$site_locale                   = self::get();
-		$current_locale                = determine_locale();
-		$locale_was_switched           = false;
-		$reload_woocommerce_textdomain = null;
-		$added_plugin_locale_filter    = false;
+		$site_locale         = self::get();
+		$current_locale      = determine_locale();
+		$locale_was_switched = false;
 
 		try {
 			// determine_locale() may reflect a temporary locale switch, a locale filter, or a different blog's cached locale.
@@ -80,36 +85,12 @@ class SiteLocale {
 				if ( ! $locale_was_switched && self::FALLBACK_LOCALE !== $current_locale ) {
 					$locale_was_switched = switch_to_locale( self::FALLBACK_LOCALE );
 				}
-
-				if ( $locale_was_switched ) {
-					$woocommerce                      = $GLOBALS['woocommerce'] ?? null;
-					$woocommerce_textdomain_candidate = array( $woocommerce, 'load_plugin_textdomain' );
-
-					if ( is_callable( $woocommerce_textdomain_candidate ) ) {
-						$reload_woocommerce_textdomain = Closure::fromCallable( $woocommerce_textdomain_candidate );
-
-						if ( false === has_filter( 'plugin_locale', 'get_locale' ) ) {
-							add_filter( 'plugin_locale', 'get_locale' );
-							$added_plugin_locale_filter = true;
-						}
-
-						$reload_woocommerce_textdomain();
-					}
-				}
 			}
 
 			return $callback();
 		} finally {
 			if ( $locale_was_switched ) {
 				restore_previous_locale();
-
-				if ( null !== $reload_woocommerce_textdomain ) {
-					if ( $added_plugin_locale_filter ) {
-						remove_filter( 'plugin_locale', 'get_locale' );
-					}
-
-					$reload_woocommerce_textdomain();
-				}
 			}
 		}
 	}

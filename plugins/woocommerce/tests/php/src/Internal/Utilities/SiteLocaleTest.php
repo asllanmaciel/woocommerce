@@ -109,36 +109,16 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 	}
 
 	/**
-	 * An enclosing wc_switch_to_site_locale() window registers `plugin_locale` → `get_locale`
-	 * and expects wc_restore_locale() to remove it. A nested run() must not strip that
-	 * registration when it tears down its own locale switch.
+	 * run() deliberately registers no filters of its own: WP_Locale_Switcher already filters
+	 * `locale` and `determine_locale`, so the `plugin_locale` value that
+	 * WC()->load_plugin_textdomain() reads resolves to the switched locale without help.
+	 * Registering `plugin_locale` → `get_locale` here would also override any third-party
+	 * registration at the same priority, and tearing it down would strip the registration of
+	 * an enclosing wc_switch_to_site_locale() window.
 	 *
-	 * @testdox Should preserve a pre-existing plugin_locale filter registration across a nested run.
+	 * @testdox Should leave hook registrations untouched, including an enclosing window's.
 	 */
-	public function test_run_preserves_an_outer_plugin_locale_filter(): void {
-		$user_id = self::factory()->user->create(
-			array(
-				'role'   => 'administrator',
-				'locale' => 'fr_FR',
-			)
-		);
-		wp_set_current_user( $user_id );
-		set_current_screen( 'options-permalink' );
-
-		add_filter( 'plugin_locale', 'get_locale' );
-		try {
-			SiteLocale::run( static fn() => null );
-
-			$this->assertNotFalse( has_filter( 'plugin_locale', 'get_locale' ), 'The outer plugin_locale registration must survive a nested run.' );
-		} finally {
-			remove_filter( 'plugin_locale', 'get_locale' );
-		}
-	}
-
-	/**
-	 * @testdox Should remove the plugin_locale filter it added once the run finishes.
-	 */
-	public function test_run_removes_the_plugin_locale_filter_it_added(): void {
+	public function test_run_does_not_touch_plugin_locale_registrations(): void {
 		$user_id = self::factory()->user->create(
 			array(
 				'role'   => 'administrator',
@@ -152,7 +132,53 @@ class SiteLocaleTest extends WC_Unit_Test_Case {
 
 		SiteLocale::run( static fn() => null );
 
-		$this->assertFalse( has_filter( 'plugin_locale', 'get_locale' ), 'The filter added during the run should be removed afterwards.' );
+		$this->assertFalse( has_filter( 'plugin_locale', 'get_locale' ), 'run() must not leave a plugin_locale registration behind.' );
+
+		// An enclosing wc_switch_to_site_locale() window owns this registration and expects
+		// wc_restore_locale() to be the one that removes it.
+		add_filter( 'plugin_locale', 'get_locale' );
+		try {
+			SiteLocale::run( static fn() => null );
+
+			$this->assertNotFalse( has_filter( 'plugin_locale', 'get_locale' ), 'The outer plugin_locale registration must survive a nested run.' );
+		} finally {
+			remove_filter( 'plugin_locale', 'get_locale' );
+		}
+	}
+
+	/**
+	 * @testdox Should resolve translations under the site locale rather than the request locale.
+	 */
+	public function test_run_resolves_translations_under_the_site_locale(): void {
+		$user_id = self::factory()->user->create(
+			array(
+				'role'   => 'administrator',
+				'locale' => 'fr_FR',
+			)
+		);
+		wp_set_current_user( $user_id );
+		set_current_screen( 'options-permalink' );
+
+		$translate_slug = static fn( string $translation, string $text, string $context ): string =>
+			( 'slug' === $context && 'product' === $text ) ? 'produit' : $translation;
+
+		// Stands in for a loaded fr_FR textdomain: the test environment has no language packs,
+		// so the switch is observed through a gettext filter that only applies while switched.
+		$maybe_translate = static function ( string $translation, string $text, string $context ) use ( $translate_slug ): string {
+			return 'fr_FR' === determine_locale() ? $translate_slug( $translation, $text, $context ) : $translation;
+		};
+
+		add_filter( 'gettext_with_context_woocommerce', $maybe_translate, 10, 3 );
+		try {
+			$this->assertSame( 'produit', _x( 'product', 'slug', 'woocommerce' ), 'The request locale should translate before running.' );
+
+			$slug_inside = SiteLocale::run( static fn(): string => _x( 'product', 'slug', 'woocommerce' ) );
+
+			$this->assertSame( 'product', $slug_inside, 'The callback should resolve translations under the site locale, not the request locale.' );
+			$this->assertSame( 'produit', _x( 'product', 'slug', 'woocommerce' ), 'Translation resolution should be restored afterwards.' );
+		} finally {
+			remove_filter( 'gettext_with_context_woocommerce', $maybe_translate, 10 );
+		}
 	}
 
 	/**
